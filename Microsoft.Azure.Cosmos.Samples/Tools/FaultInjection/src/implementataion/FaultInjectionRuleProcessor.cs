@@ -214,6 +214,7 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
                 FaultInjectionOperationType.DeleteItem => OperationType.Delete,
                 FaultInjectionOperationType.PatchItem => OperationType.Patch,
                 FaultInjectionOperationType.Batch => OperationType.Batch,
+                FaultInjectionOperationType.Head => OperationType.Head,
                 FaultInjectionOperationType.ReadFeed => OperationType.ReadFeed,
                 _ => throw new ArgumentException($"FaultInjectionOperationType: {faultInjectionOperationType} is not supported"),
             };
@@ -316,12 +317,16 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
                     }
 
                     // Make sure Primary URI is the first one in the list
-                    IEnumerable<Uri> resolvedEndpoints = (await this.ResolveAllTransportAddressUriAsync(
+                    IEnumerable<TransportAddressUri> resolvedAllEndpoints = await this.ResolveAllTransportAddressUriAsync(
                             fauntInjectionAddressRequest,
                             addressEndpoints.IsIncludePrimary(),
-                            true))
-                            .Take(addressEndpoints.GetReplicaCount())
+                            true);
+
+                    (int startPos, int count) = addressEndpoints.GetReplicaRange();
+                    IEnumerable<Uri> resolvedEndpoints = resolvedAllEndpoints.Take(new Range(startPos, startPos + count))
                             .Select(address => address.Uri);
+
+                    System.Diagnostics.Trace.TraceInformation($"{condition.GetEndpoint().GetResoureName()} => {feedRangeInternal} => { string.Join(",", resolvedEndpoints)}");
                     resolvedPhysicalAddresses.AddRange(resolvedEndpoints);
                 }
             }

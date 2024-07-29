@@ -78,35 +78,42 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         /// <returns></returns>
         public async Task<(bool, StoreResponse?)> OnRequestCallAsync(ChannelCallArguments args)
         {
-            StoreResponse faultyResponse;
-            FaultInjectionServerErrorRule? serverResponseErrorRule = this.ruleStore?.FindRntbdServerResponseErrorRule(args);
-            if (serverResponseErrorRule != null)
+            lock (this)
             {
+                StoreResponse faultyResponse;
+                FaultInjectionServerErrorRule? serverResponseErrorRule = this.ruleStore?.FindRntbdServerResponseErrorRule(args);
+                if (serverResponseErrorRule == null)
+                {
+                    return (false, null);
+                }
+
                 this.applicationContext.AddRuleExecution(serverResponseErrorRule.GetId(), args.CommonArguments.ActivityId);
 
                 faultyResponse = serverResponseErrorRule.GetInjectedServerError(args);
 
-                DefaultTrace.TraceInformation("FaultInjection: FaultInjection Rule {0} Inserted error for request {1}",
-                                    serverResponseErrorRule.GetId(), args.CommonArguments.ActivityId);
+                System.Diagnostics.Trace.TraceInformation("FaultInjection: FaultInjection Rule {0} Inserted error for request {1} status {2} LSN {3}  rntbdEp: {4}",
+                                    serverResponseErrorRule.GetId(), 
+                                    args.CommonArguments.ActivityId, 
+                                    faultyResponse.Status, 
+                                    faultyResponse.Headers[WFConstants.BackendHeaders.LSN], 
+                                    args?.PreparedCall?.Uri?.AbsoluteUri);
 
-                if (serverResponseErrorRule.GetInjectedServerErrorType() == FaultInjectionServerErrorType.Timeout)
+                if (serverResponseErrorRule.GetInjectedServerErrorType() != FaultInjectionServerErrorType.Timeout)
                 {
-                    TransportException transportException = new TransportException(
-                        TransportErrorCode.RequestTimeout,
-                        new TimeoutException("Fault Injection Server Error: Timeout"),
-                        args.CommonArguments.ActivityId,
-                        args.PreparedCall.Uri,
-                        "Fault Injection Server Error: Timeout",
-                        args.CommonArguments.UserPayload,
-                        args.CommonArguments.PayloadSent);
-                    await Task.Delay(this.requestTimeout);
-                    throw transportException;
+                    return (true, faultyResponse);
                 }
-
-                return (true, faultyResponse);
             }
 
-            return (false, null);
+            TransportException transportException = new TransportException(
+                TransportErrorCode.RequestTimeout,
+                new TimeoutException("Fault Injection Server Error: Timeout"),
+                args.CommonArguments.ActivityId,
+                args.PreparedCall.Uri,
+                "Fault Injection Server Error: Timeout",
+                args.CommonArguments.UserPayload,
+                args.CommonArguments.PayloadSent);
+            await Task.Delay(this.requestTimeout);
+            throw transportException;
         }
 
         /// <summary>

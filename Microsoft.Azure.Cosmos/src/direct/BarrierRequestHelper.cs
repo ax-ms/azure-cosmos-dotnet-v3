@@ -164,6 +164,10 @@ namespace Microsoft.Azure.Documents
                 barrierLsnRequest.Properties[WFConstants.BackendHeaders.EffectivePartitionKeyString] = request.Properties[WFConstants.BackendHeaders.EffectivePartitionKeyString];
             }
 
+            barrierLsnRequest.UseStatusCodeFor429 = true;
+            //barrierLsnRequest.UseStatusCodeFor429 = request.UseStatusCodeFor429;
+            barrierLsnRequest.UseStatusCodeForBadRequest = request.UseStatusCodeForBadRequest;
+            barrierLsnRequest.UseStatusCodeForFailures = request.UseStatusCodeForFailures;
             return barrierLsnRequest;
         }
 

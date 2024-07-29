@@ -53,7 +53,7 @@ namespace Microsoft.Azure.Cosmos.Telemetry
 
                 VmMetadataApiHandler.isInitialized = true;
 
-                _ = Task.Run(() => MetadataApiCallAsync(httpClient), default);
+                //_ = Task.Run(() => MetadataApiCallAsync(httpClient), default);
             }
 
         }

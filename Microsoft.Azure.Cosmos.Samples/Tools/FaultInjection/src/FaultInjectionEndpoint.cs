@@ -15,12 +15,13 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         private readonly string containerName;
         private readonly FeedRange feedRange;
         private readonly bool includePrimary;
+        private readonly int replicaPositionStart;
         private readonly int replicaCount;
 
         internal static FaultInjectionEndpoint Empty = new FaultInjectionEndpoint(
             string.Empty, 
             string.Empty, 
-            new FeedRangePartitionKey(new PartitionKey()), false, 0);
+            new FeedRangePartitionKey(new PartitionKey()), false, 0, 1);
 
         /// <summary>
         /// Creates a <see cref="FaultInjectionEndpoint"/>.
@@ -35,12 +36,14 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
             string containerName,
             FeedRange feedRange,
             bool includePrimary,
+            int replicaPositionStart, 
             int replicaCount)
         { 
             this.databaseName = databaseName;
             this.containerName = containerName;
             this.feedRange = feedRange;
             this.includePrimary = includePrimary;
+            this.replicaPositionStart = replicaPositionStart;
             this.replicaCount = replicaCount;
         }
 
@@ -66,9 +69,9 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         /// Gets the replica count. Used to inidcate how many physical addresses can be applied to the fault injection rule.
         /// </summary>
         /// <returns>an int, the replica count</returns>
-        public int GetReplicaCount()
+        public (int, int) GetReplicaRange()
         { 
-            return this.replicaCount; 
+            return (this.replicaPositionStart, this.replicaCount); 
         }
 
         public string GetResoureName()

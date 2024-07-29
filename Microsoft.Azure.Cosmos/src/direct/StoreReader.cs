@@ -9,6 +9,7 @@ namespace Microsoft.Azure.Documents
     using System.Net;
     using System.Runtime.CompilerServices;
     using System.Threading.Tasks;
+    using Azure;
     using Microsoft.Azure.Cosmos.Core.Trace;
 
     internal sealed class StoreReader
@@ -293,6 +294,8 @@ namespace Microsoft.Azure.Documents
                         cancellationException ??= storeException;
                         continue;
                     }
+
+                    System.Diagnostics.Trace.TraceInformation($"{storeResponse?.StatusCode} -> {storeResponse?.LSN} -> {endTime} -> {readTaskValuePair.Value.uri}");
 
                     using (ReferenceCountedDisposable<StoreResult> disposableStoreResult = StoreResult.CreateStoreResult(
                         storeResponse,

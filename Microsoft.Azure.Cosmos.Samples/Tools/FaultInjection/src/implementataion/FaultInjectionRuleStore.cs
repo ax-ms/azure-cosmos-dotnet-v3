@@ -97,17 +97,21 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
 
         public FaultInjectionServerErrorRule? FindRntbdServerResponseErrorRule(ChannelCallArguments args)
         {
-            foreach (FaultInjectionServerErrorRule rule in this.serverResponseErrorRuleSet.Keys)
+            lock (this)
             {
-                if ((rule.GetConnectionType() == FaultInjectionConnectionType.Direct
-                    || rule.GetConnectionType() == FaultInjectionConnectionType.All)
-                    && rule.IsApplicable(args))
+                System.Diagnostics.Trace.TraceInformation($"Evaluating for channel rntbdEp: {args?.PreparedCall?.Uri?.AbsoluteUri} regionalEP: {args?.LocationEndpointToRouteTo?.AbsoluteUri}");
+                foreach (FaultInjectionServerErrorRule rule in this.serverResponseErrorRuleSet.Keys)
                 {
-                    return rule;
+                    if ((rule.GetConnectionType() == FaultInjectionConnectionType.Direct
+                        || rule.GetConnectionType() == FaultInjectionConnectionType.All)
+                        && rule.IsApplicable(args))
+                    {
+                        return rule;
+                    }
                 }
-            }
 
-            return null;
+                return null;
+            }
         }
 
         public FaultInjectionServerErrorRule? FindRntbdServerResponseDelayRule(ChannelCallArguments args)

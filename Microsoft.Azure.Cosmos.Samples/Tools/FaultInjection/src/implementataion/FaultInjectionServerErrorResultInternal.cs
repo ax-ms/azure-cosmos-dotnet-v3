@@ -16,7 +16,7 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
     internal class FaultInjectionServerErrorResultInternal
     {
         private readonly FaultInjectionServerErrorType serverErrorType;
-        private readonly int times;
+        internal volatile int times;
         private readonly TimeSpan delay;
         private readonly bool suppressServiceRequest;
         private readonly FaultInjectionApplicationContext applicationContext;
@@ -114,6 +114,11 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         }
 
         /// <summary>
+        /// TBS later
+        /// </summary>
+        public Func<ChannelCallArguments, string, StoreResponse>? FuncGetInjectedServerError { get; set; }
+
+        /// <summary>
         /// Get server error to be injected
         /// </summary>
         /// <param name="args"></param>
@@ -121,6 +126,16 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         /// <returns></returns>
         /// <exception cref="ArgumentException"></exception>
         public StoreResponse GetInjectedServerError(ChannelCallArguments args, string ruleId)
+        {
+            if (this.FuncGetInjectedServerError != null)
+            {
+                return this.FuncGetInjectedServerError(args, ruleId);
+            }
+
+            return this.GetInjectedServerErrorInternal(args, ruleId);
+        }
+
+        private StoreResponse GetInjectedServerErrorInternal(ChannelCallArguments args, string ruleId)
         {
             StoreResponse storeResponse;
             string lsn = args.RequestHeaders.Get(WFConstants.BackendHeaders.LSN) ?? "0";
@@ -153,17 +168,17 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
                     return storeResponse;
 
                 case FaultInjectionServerErrorType.TooManyRequests:
-                    INameValueCollection tooManyRequestsHeaders = args.RequestHeaders;
+                    INameValueCollection tooManyRequestsHeaders = args.RequestHeaders.Clone();
+                    tooManyRequestsHeaders.Clear();
+
                     tooManyRequestsHeaders.Set(HttpConstants.HttpHeaders.RetryAfterInMilliseconds, "500");
                     tooManyRequestsHeaders.Set(WFConstants.BackendHeaders.SubStatus, 3103.ToString(CultureInfo.InvariantCulture));
-                    tooManyRequestsHeaders.Set(WFConstants.BackendHeaders.LocalLSN, "-1");
-                    tooManyRequestsHeaders.Set(WFConstants.BackendHeaders.GlobalCommittedLSN, "-1");
 
                     storeResponse = new StoreResponse()
                     {
                         Status = 429,
                         Headers = tooManyRequestsHeaders,
-                        ResponseBody = new MemoryStream(Encoding.UTF8.GetBytes($"Fault Injection Server Error: Too Many Requests, rule: {ruleId}"))
+                        ResponseBody = new MemoryStream(Encoding.UTF8.GetBytes($"{{\"rule\": FaultInjection-{ruleId}}}"))
                     };
 
                     return storeResponse;
@@ -248,6 +263,36 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
                         Status = 503,
                         Headers = serviceUnavailableHeaders,
                         ResponseBody = new MemoryStream(Encoding.UTF8.GetBytes($"Fault Injection Server Error: Service Unavailable, rule: {ruleId}"))
+                    };
+
+                    return storeResponse;
+                case FaultInjectionServerErrorType.LowerLSN:
+                    INameValueCollection lowerLsnHeaders = args.RequestHeaders.Clone();
+                    lowerLsnHeaders.Clear();
+                    lowerLsnHeaders.Set(WFConstants.BackendHeaders.LocalLSN, "50");
+                    lowerLsnHeaders.Set(WFConstants.BackendHeaders.LSN, "50");
+                    lowerLsnHeaders.Set(WFConstants.BackendHeaders.GlobalCommittedLSN, "50");
+
+                    storeResponse = new StoreResponse()
+                    {
+                        Status = 200,
+                        Headers = lowerLsnHeaders,
+                        ResponseBody = new MemoryStream(Encoding.UTF8.GetBytes($"{{\"rule\": {ruleId}}}"))
+                    };
+
+                    return storeResponse;
+                case FaultInjectionServerErrorType.HigherLSN:
+                    INameValueCollection higherLsnHeaders = args.RequestHeaders.Clone();
+                    higherLsnHeaders.Clear();
+                    higherLsnHeaders.Set(WFConstants.BackendHeaders.LocalLSN, "51");
+                    higherLsnHeaders.Set(WFConstants.BackendHeaders.LSN, "51");
+                    higherLsnHeaders.Set(WFConstants.BackendHeaders.GlobalCommittedLSN, "51");
+
+                    storeResponse = new StoreResponse()
+                    {
+                        Status = 200,
+                        Headers = higherLsnHeaders,
+                        ResponseBody = new MemoryStream(Encoding.UTF8.GetBytes($"{{\"rule\": {ruleId}}}"))
                     };
 
                     return storeResponse;

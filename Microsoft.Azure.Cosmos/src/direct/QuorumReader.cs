@@ -109,15 +109,27 @@ namespace Microsoft.Azure.Documents
                                 this.authorizationTokenProvider, 
                                 secondaryQuorumReadResult.SelectedLsn,
                                 secondaryQuorumReadResult.GlobalCommittedSelectedLsn);
-                            if (await this.WaitForReadBarrierAsync(
-                                    barrierRequest,
-                                    allowPrimary: true,
-                                    readQuorum: readQuorumValue,
-                                    readBarrierLsn: secondaryQuorumReadResult.SelectedLsn,
-                                    targetGlobalCommittedLSN: secondaryQuorumReadResult.GlobalCommittedSelectedLsn,
-                                    readMode: readMode))
+
+                            barrierRequest.UseStatusCodeFor429 = true;
+                            //barrierRequest.UseStatusCodeFor429 = entity.UseStatusCodeFor429;
+                            //barrierRequest.UseStatusCodeForBadRequest = entity.UseStatusCodeForBadRequest;
+                            //barrierRequest.UseStatusCodeForFailures = entity.UseStatusCodeForFailures;
+
+                            (bool barrierMet, ReferenceCountedDisposable<StoreResult> responseToUse) = await this.WaitForReadBarrierAsync(
+                                barrierRequest,
+                                allowPrimary: true,
+                                readQuorum: readQuorumValue,
+                                readBarrierLsn: secondaryQuorumReadResult.SelectedLsn,
+                                targetGlobalCommittedLSN: secondaryQuorumReadResult.GlobalCommittedSelectedLsn,
+                                readMode: readMode);
+
+                            if (barrierMet)
                             {
                                 return secondaryQuorumReadResult.GetResponseAndSkipStoreResultDispose();
+                            }
+                            else if (!barrierMet && responseToUse != null)
+                            {
+                                return responseToUse.Target.ToResponse(null); // Fix it
                             }
 
                             DefaultTrace.TraceWarning(
@@ -388,8 +400,20 @@ namespace Microsoft.Azure.Documents
 
             // ReadBarrier required
             DocumentServiceRequest barrierRequest = await BarrierRequestHelper.CreateAsync(entity, this.authorizationTokenProvider, readLsn, globalCommittedLSN);
-            if (!await this.WaitForReadBarrierAsync(barrierRequest, false, readQuorum, readLsn, globalCommittedLSN, readMode))
+            (bool barrierMet, ReferenceCountedDisposable<StoreResult> responseToUse) = await this.WaitForReadBarrierAsync(barrierRequest, false, readQuorum, readLsn, globalCommittedLSN, readMode);
+            if (!barrierMet)
             {
+                if (responseToUse != null)
+                {
+                    return new ReadQuorumResult(
+                        entity.RequestContext.RequestChargeTracker,
+                        ReadQuorumResultKind.QuorumMet,
+                        readLsn,
+                        globalCommittedLSN,
+                        responseToUse,
+                        responsesForLogging);
+                }
+
                 return new ReadQuorumResult(
                     entity.RequestContext.RequestChargeTracker,
                     ReadQuorumResultKind.QuorumSelected,
@@ -537,7 +561,7 @@ namespace Microsoft.Azure.Documents
             return PrimaryReadOutcome.QuorumNotMet;
         }
 
-        private Task<bool> WaitForReadBarrierAsync(
+        private Task<(bool, ReferenceCountedDisposable<StoreResult>)> WaitForReadBarrierAsync(
             DocumentServiceRequest barrierRequest,
             bool allowPrimary,
             int readQuorum,
@@ -557,7 +581,7 @@ namespace Microsoft.Azure.Documents
         // (Env variable 'AZURE_COSMOS_OLD_BARRIER_REQUESTS_HANDLING_ENABLED' allowing to fall back
         // This old implementation will be removed (and the environment
         // variable not been used anymore) after some bake time.
-        private async Task<bool> WaitForReadBarrierOldAsync(
+        private async Task<(bool, ReferenceCountedDisposable<StoreResult>)> WaitForReadBarrierOldAsync(
             DocumentServiceRequest barrierRequest,
             bool allowPrimary,
             int readQuorum,
@@ -588,7 +612,7 @@ namespace Microsoft.Azure.Documents
                 if ((responses.Count(response => response.Target.LSN >= readBarrierLsn) >= readQuorum) &&
                     (!(targetGlobalCommittedLSN > 0) || maxGlobalCommittedLsnInResponses >= targetGlobalCommittedLSN))
                 {
-                    return true;
+                    return (true, null);
                 }
 
                 maxGlobalCommittedLsn = maxGlobalCommittedLsn > maxGlobalCommittedLsnInResponses ?
@@ -629,7 +653,7 @@ namespace Microsoft.Azure.Documents
                     if ((responses.Count(response => response.Target.LSN >= readBarrierLsn) >= readQuorum) &&
                         maxGlobalCommittedLsnInResponses >= targetGlobalCommittedLSN)
                     {
-                        return true;
+                        return (true, null);
                     }
 
                     maxGlobalCommittedLsn = maxGlobalCommittedLsn > maxGlobalCommittedLsnInResponses ?
@@ -657,10 +681,10 @@ namespace Microsoft.Azure.Documents
 
             DefaultTrace.TraceInformation("QuorumReader: WaitForReadBarrierAsync - TargetGlobalCommittedLsn: {0}, MaxGlobalCommittedLsn: {1} ReadMode: {2}.",
                 targetGlobalCommittedLSN, maxGlobalCommittedLsn, readMode);
-            return false;
+            return (false, null);
         }
 
-        private async Task<bool> WaitForReadBarrierNewAsync(
+        private async Task<(bool, ReferenceCountedDisposable<StoreResult>)> WaitForReadBarrierNewAsync(
             DocumentServiceRequest barrierRequest,
             bool allowPrimary,
             int readQuorum,
@@ -694,6 +718,12 @@ namespace Microsoft.Azure.Documents
                 long maxGlobalCommittedLsnInResponses = 0;
                 foreach(ReferenceCountedDisposable<StoreResult> response in responses)
                 {
+                    if (response.Target.StatusCode == StatusCodes.TooManyRequests)
+                    {
+                        ReferenceCountedDisposable<StoreResult>  response1 = response.TryAddReference();
+                        return (false, response1);
+                    }
+
                     maxGlobalCommittedLsnInResponses = Math.Max(maxGlobalCommittedLsnInResponses, response.Target.GlobalCommittedLSN);
                     if (!hasConvergedOnLSN && response.Target.LSN >= readBarrierLsn)
                     {
@@ -709,7 +739,7 @@ namespace Microsoft.Azure.Documents
                 if (hasConvergedOnLSN &&
                     (targetGlobalCommittedLSN <= 0 || maxGlobalCommittedLsnInResponses >= targetGlobalCommittedLSN))
                 {
-                    return true;
+                    return (true, null);
                 }
 
                 maxGlobalCommittedLsn = Math.Max(maxGlobalCommittedLsn, maxGlobalCommittedLsnInResponses);
@@ -745,7 +775,7 @@ namespace Microsoft.Azure.Documents
 
             DefaultTrace.TraceInformation("QuorumReader: WaitForReadBarrierAsync - TargetGlobalCommittedLsn: {0}, MaxGlobalCommittedLsn: {1} ReadMode: {2}, HasLSNConverged:{3}.",
                 targetGlobalCommittedLSN, maxGlobalCommittedLsn, readMode, hasConvergedOnLSN);
-            return false;
+            return (false, null);
         }
 
         private bool IsQuorumMet(
@@ -760,6 +790,21 @@ namespace Microsoft.Azure.Documents
             long maxLsn = 0;
             long minLsn = long.MaxValue;
             int replicaCountMaxLsn = 0;
+
+            // Treat any 429 as quorum met (forces yielding upstream)
+            ReferenceCountedDisposable<StoreResult> throttledStoreResult = readResponses.FirstOrDefault(response => response.Target.StatusCode == StatusCodes.TooManyRequests);
+            if (throttledStoreResult != null)
+            {
+                readLsn = 0;
+                globalCommittedLSN = -1;
+                selectedResponse = throttledStoreResult;
+
+                // `selectedResponse` is an out parameter, so ensure it stays alive.
+                selectedResponse = selectedResponse.TryAddReference();
+
+                return true;
+            }
+
             IEnumerable<ReferenceCountedDisposable<StoreResult>> validReadResponses = readResponses.Where(response => response.Target.IsValid);
             int validResponsesCount = validReadResponses.Count();
 

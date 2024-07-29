@@ -13,7 +13,8 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         private readonly string databaseName;
         private readonly string containerName;
         private readonly FeedRange feedRange;
-        private int replicaCount = int.MaxValue;
+        private int replicaCount = 4;
+        private int replicaPositionStart = 0;
         private bool includePrimary = true;
 
         /// <summary>
@@ -34,7 +35,7 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         /// </summary>
         /// <param name="replicaCount">int representing the replica count.</param>
         /// <returns>the <see cref="FaultInjectionEndpointBuilder"/>.</returns>
-        public FaultInjectionEndpointBuilder WithReplicaCount(int replicaCount)
+        public FaultInjectionEndpointBuilder WithReplicaRange(int replicaPositionStart, int replicaCount)
         {
             if (replicaCount < 0)
             {
@@ -42,6 +43,7 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
             }
 
             this.replicaCount = replicaCount;
+            this.replicaPositionStart = replicaPositionStart;
             return this;
         }
 
@@ -62,7 +64,7 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         /// <returns>the <see cref="FaultInjectionEndpoint"/>.</returns>
         public FaultInjectionEndpoint Build()
         {
-            return new FaultInjectionEndpoint(this.databaseName, this.containerName, this.feedRange, this.includePrimary, this.replicaCount);
+            return new FaultInjectionEndpoint(this.databaseName, this.containerName, this.feedRange, this.includePrimary, this.replicaPositionStart, this.replicaCount);
         }
     }
 }

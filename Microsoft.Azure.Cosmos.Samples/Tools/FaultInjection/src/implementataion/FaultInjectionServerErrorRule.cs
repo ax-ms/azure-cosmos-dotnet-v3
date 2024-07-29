@@ -6,6 +6,7 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
     using System;
     using System.Collections.Concurrent;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using Microsoft.Azure.Documents;
     using Microsoft.Azure.Documents.Rntbd;
 
@@ -48,6 +49,19 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         }
 
         public bool IsApplicable(ChannelCallArguments args)
+        {
+            bool isApplicable = this.IsApplicableInternal(args);
+            Trace.TraceInformation($"RuleId: {this.id} IsApplicable:{isApplicable} times:{this.result.times} rntbdEp: {args?.PreparedCall?.Uri?.AbsoluteUri} regionalEP: {args?.LocationEndpointToRouteTo?.AbsoluteUri}");
+
+            if (isApplicable)
+            {
+                this.result.times--; // HACK
+            }
+
+            return isApplicable;
+        }
+
+        private bool IsApplicableInternal(ChannelCallArguments args)
         {
             if (!this.IsValid())
             {

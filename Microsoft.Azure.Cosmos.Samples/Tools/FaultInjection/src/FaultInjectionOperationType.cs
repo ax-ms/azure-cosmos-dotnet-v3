@@ -54,6 +54,11 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         ReadFeed,
 
         /// <summary>
+        /// Collection Head
+        /// </summary>
+        Head,
+
+        /// <summary>
         /// All operation types. Default value.
         /// </summary>
         All,

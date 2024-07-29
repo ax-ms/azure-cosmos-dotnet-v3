@@ -3322,57 +3322,155 @@ namespace Microsoft.Azure.Cosmos.SDK.EmulatorTests
         }
 
         [TestMethod]
-        [Timeout(60000)]
-        public async Task ReadMany2UnreachablePartitionsTest()
+        [Timeout(600000)]
+        public async Task StrongReadBarrier429TestsAsync()
         {
             string dbid = "TestDb";
             string cid = "TestContainer";
+            string connectionString = "";
 
             CosmosClient client1 = new CosmosClient(
-                connectionString: "", 
-                new CosmosClientOptions() {
-                    EnableUpgradeConsistencyToLocalQuorum = true,
-                });
+                connectionString: connectionString
+                );
 
             Cosmos.Database db = await client1.CreateDatabaseIfNotExistsAsync("TestDb");
             Container c1 = await db.CreateContainerIfNotExistsAsync(new ContainerProperties("TestContainer", "/pk"), throughput: 400);
 
-            List<(string, Cosmos.PartitionKey)> items = new List<(string, Cosmos.PartitionKey)>();
-            
-            //Create Items 
-            for (int i = 0; i < 5; i++)
+            List<FeedRange> feedRanges = (List<FeedRange>)await c1.GetFeedRangesAsync();
+            Assert.IsTrue(feedRanges.Count > 0);
+
+            List<FaultInjectionRule> faultRules = new List<FaultInjectionRule>();
             {
-                string itemId = Guid.NewGuid().ToString();
-                string partitionKey = (i % 5).ToString();
 
-                items.Add((itemId, new Cosmos.PartitionKey(partitionKey)));
+                FaultInjectionCondition lowLsnCondition = new FaultInjectionConditionBuilder()
+                    .WithConnectionType(FaultInjectionConnectionType.Direct)
+                    .WithOperationType(FaultInjectionOperationType.ReadItem)
+                    .WithEndpoint(new FaultInjectionEndpointBuilder(
+                        dbid,
+                        "TestContainer",
+                        feedRanges[0])
+                        .WithReplicaRange(0, 1)
+                        .WithIncludePrimary(false)
+                        .Build())
+                    .Build();
 
-                dynamic item = new
-                {
-                    id = itemId,
-                    pk = partitionKey,
-                };
+                FaultInjectionServerErrorResult lowLsnResult = new FaultInjectionServerErrorResultBuilder(FaultInjectionServerErrorType.LowerLSN)
+                    .WithTimes(1)
+                    .Build();
 
-                await c1.CreateItemAsync(item);
+                FaultInjectionRule lowLsnRule = new FaultInjectionRuleBuilder(nameof(lowLsnResult), lowLsnCondition, lowLsnResult)
+                    .WithDuration(TimeSpan.FromDays(1))
+                    .Build();
+
+                faultRules.Add(lowLsnRule);
             }
+
+            {
+                FaultInjectionCondition highLsnCondition = new FaultInjectionConditionBuilder()
+                    .WithConnectionType(FaultInjectionConnectionType.Direct)
+                    .WithOperationType(FaultInjectionOperationType.ReadItem)
+                    .WithEndpoint(new FaultInjectionEndpointBuilder(
+                        dbid,
+                        "TestContainer",
+                        feedRanges[0])
+                        .WithReplicaRange(1, 2)
+                        .WithIncludePrimary(false)
+                        .Build())
+                    .Build();
+
+                FaultInjectionServerErrorResult highLsnResult = new FaultInjectionServerErrorResultBuilder(FaultInjectionServerErrorType.HigherLSN)
+                    .WithTimes(1)
+                    .Build();
+
+                FaultInjectionRule highLsnRule = new FaultInjectionRuleBuilder(nameof(highLsnResult), highLsnCondition, highLsnResult)
+                    .WithDuration(TimeSpan.FromDays(1))
+                    .Build();
+
+                faultRules.Add(highLsnRule);
+            }
+
+            {
+                FaultInjectionCondition headCondition = new FaultInjectionConditionBuilder()
+                    .WithConnectionType(FaultInjectionConnectionType.Direct)
+                    .WithOperationType(FaultInjectionOperationType.Head)
+                    .WithEndpoint(new FaultInjectionEndpointBuilder(
+                        dbid,
+                        "TestContainer",
+                        feedRanges[0])
+                        .WithReplicaRange(0, 4)
+                        .WithIncludePrimary(true)
+                        .Build())
+                    .Build();
+
+                FaultInjectionServerErrorResult headResult = new FaultInjectionServerErrorResultBuilder(FaultInjectionServerErrorType.TooManyRequests)
+                    .WithTimes(int.MaxValue - 1)
+                    .Build();
+
+                FaultInjectionRule headRule = new FaultInjectionRuleBuilder(nameof(headResult), headCondition, headResult)
+                    .WithDuration(TimeSpan.FromDays(1))
+                    .Build();
+
+                faultRules.Add(headRule);
+            }
+
+            FaultInjector injector = new FaultInjector(faultRules);
+
+            faultRules.ForEach(e => e.Disable());
+
+            await Task.Yield();
+
+            //(string endpoint, string key) = TestCommon.GetAccountInfo();
+            System.Diagnostics.Trace.TraceInformation("Starting a strong read workload");
+            CosmosClientOptions cosmosClientOptions = new CosmosClientOptions()
+            {
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                EnableUpgradeConsistencyToLocalQuorum = true,
+                RequestTimeout = TimeSpan.FromMinutes(120), // For debugging
+            };
+
+            cosmosClientOptions = injector.GetFaultInjectionClientOptions(cosmosClientOptions);
+            using CosmosClient fiClient = new CosmosClient(
+                connectionString: connectionString,
+                clientOptions: cosmosClientOptions);
+
+            Container fic = fiClient.GetContainer(dbid, cid);
+
+            faultRules.ForEach(e => e.Enable());
+            await OneOperation(fic);
+        }
+
+        [TestMethod]
+        [Timeout(600000)]
+        public async Task StrongRead429TestsAsync()
+        {
+            string dbid = "TestDb";
+            string cid = "TestContainer";
+            string connectionString = "";
+
+            CosmosClient client1 = new CosmosClient(
+                connectionString: connectionString
+                );
+
+            Cosmos.Database db = await client1.CreateDatabaseIfNotExistsAsync("TestDb");
+            Container c1 = await db.CreateContainerIfNotExistsAsync(new ContainerProperties("TestContainer", "/pk"), throughput: 400);
 
             List<FeedRange> feedRanges = (List<FeedRange>)await c1.GetFeedRangesAsync();
             Assert.IsTrue(feedRanges.Count > 0);
 
             FaultInjectionCondition condition = new FaultInjectionConditionBuilder()
                 .WithConnectionType(FaultInjectionConnectionType.Direct)
-                .WithOperationType(FaultInjectionOperationType.All)
+                .WithOperationType(FaultInjectionOperationType.ReadItem)
                 .WithEndpoint(new FaultInjectionEndpointBuilder(
-                    dbid, 
+                    dbid,
                     "TestContainer",
                     feedRanges[0])
-                    .WithReplicaCount(4)
+                    .WithReplicaRange(0, 4)
                     .WithIncludePrimary(true)
                     .Build())
                 .Build();
 
             FaultInjectionServerErrorResult result = new FaultInjectionServerErrorResultBuilder(FaultInjectionServerErrorType.TooManyRequests)
-                .WithTimes(int.MaxValue -1)
+                .WithTimes(1)
                 .Build();
 
             FaultInjectionRule rule = new FaultInjectionRuleBuilder("connectionDelay", condition, result)
@@ -3383,22 +3481,44 @@ namespace Microsoft.Azure.Cosmos.SDK.EmulatorTests
 
             rule.Disable();
 
-            CosmosClientOptions clientOptions = new CosmosClientOptions()
-            { 
-                ConnectionMode = ConnectionMode.Direct,
-                ConsistencyLevel = Cosmos.ConsistencyLevel.Strong, 
-            };
+            await Task.Yield();
 
             //(string endpoint, string key) = TestCommon.GetAccountInfo();
+            System.Diagnostics.Trace.TraceInformation("Starting a strong read workload");
+            CosmosClientOptions cosmosClientOptions = new CosmosClientOptions()
+            {
+                EnableUpgradeConsistencyToLocalQuorum = true,
+                RequestTimeout = TimeSpan.FromMinutes(120), // For debugging
+            };
+
+            cosmosClientOptions = injector.GetFaultInjectionClientOptions(cosmosClientOptions);
             using CosmosClient fiClient = new CosmosClient(
-                connectionString: "",
-                clientOptions: injector.GetFaultInjectionClientOptions(clientOptions));
+                connectionString: connectionString,
+                clientOptions: cosmosClientOptions);
 
             Container fic = fiClient.GetContainer(dbid, cid);
-
             rule.Enable();
-            ItemResponse<dynamic> feedResponse = await fic.ReadItemAsync<dynamic>("id1", new Cosmos.PartitionKey("pk1"));
-            Console.WriteLine(feedResponse.Diagnostics.ToString());
+
+            //Task[] t = new Task[40];
+            //for (int i = 0; i< 40; i++)
+            //{
+            //    t[i] = OneOperation(fic);
+            //}
+
+            //Task.WaitAll(t);
+
+            await OneOperation(fic);
+
+        }
+
+        private static async Task OneOperation(Container fic)
+        {
+            ResponseMessage feedResponse = await fic.ReadItemStreamAsync(
+                "id1",
+                new Cosmos.PartitionKey("pk1"),
+                new ItemRequestOptions() { ConsistencyLevel = Cosmos.ConsistencyLevel.Strong });
+            System.Diagnostics.Trace.TraceInformation(feedResponse.StatusCode.ToString());
+            System.Diagnostics.Trace.TraceInformation(feedResponse.Diagnostics.ToString());
         }
 
         private static async Task GivenItemStreamAsyncWhenMissingMemberHandlingIsErrorThenExpectsCosmosExceptionTestAsync(

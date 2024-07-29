@@ -69,6 +69,16 @@ namespace Microsoft.Azure.Cosmos.FaultInjection
         /// <summary>
         /// 503: Service Unavailable from server
         /// </summary>
-        ServiceUnavailable
+        ServiceUnavailable,
+
+        /// <summary>
+        /// 200: With LSN's 50
+        /// </summary>
+        LowerLSN,
+
+        /// <summary>
+        /// 200: With LSN's 51
+        /// </summary>
+        HigherLSN,
     }
 }
